@@ -1,0 +1,34 @@
+for running mongo and server 
+
+
+🚀 Server running on http://localhost:5001
+✅ Connected to MongoDB
+
+jayvyas@Jays-MacBook-Pro user-tracking-backend % node server.js
+
+
+-----------------------------
+
+for running react app or frontend 
+
+jayvyas@Jays-MacBook-Pro user-tracking-frontend % npm start
+
+
+
+----------------------------
+
+for building project for final out come 
+
+ayvyas@Jays-MacBook-Pro user-tracking-frontend % npm run build  
+
+----------------------------
+
+see all file in tree wise 
+
+jayvyas@Jays-MacBook-Pro HUBAI % tree -I "node_modules"
+
+--------------------------
+
+flow of structure 
+
+User visits sites → extension captures data → sends to backend API → backend stores data → export dataset → run ML scripts

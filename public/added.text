@@ -1,0 +1,75 @@
+Summary of Additions & Changes
+1. React App Structure Improvements
+Split your large App.js file into modular components:
+
+SearchAndControls.js — Search bar, dark mode toggle, CSV export button.
+
+VisitsChart.js — Displayed time-spent bar and line charts with improved styling.
+
+SessionAnalytics.js — New session analytics graph with session duration data.
+
+VisitsList.js — Listing of visit history entries.
+
+ExportUtils.js — CSV export utility function.
+
+Added sorting of visits data (chartData.sort(...)) for better visualization order.
+
+Added filtering based on search input to update displayed data dynamically.
+
+Implemented dark mode support with theme colors toggled.
+
+2. Chart Enhancements
+Added bar charts for time spent per domain.
+
+Added line charts for session analytics.
+
+Improved chart layout to avoid overlap, increased padding/margins, and adjusted label rotation.
+
+Made the chart legends and tooltips more readable.
+
+Fixed the cutting off of labels by tweaking chart container height and margins.
+
+3. Styling Updates
+Added CSS styles to App.css:
+
+Ensured charts have enough vertical space.
+
+Customized fonts and colors for light/dark mode.
+
+Added responsive label rotation on X-axis.
+
+Suggested padding/margin tweaks to avoid UI overlap and improve spacing.
+
+4. Chrome Extension Setup
+Created or updated manifest.json with:
+
+"manifest_version": 3
+
+"name", "version", "description", "permissions"
+
+"background" service worker script.
+
+"action" for popup and default icon.
+
+"host_permissions" for all URLs.
+
+Added "icons" field with icon paths.
+
+Added icons:
+
+HUBAI.png — Default extension icon.
+
+(Optional smaller icon for toolbar if needed.)
+
+Guided on folder structure for icons and static files to avoid load errors.
+
+Resolved warnings about unwanted key files by excluding irrelevant node modules in extension packaging.
+
+Fixed build errors related to OpenSSL and Webpack by upgrading/downgrading Node or setting environment variables.
+
+5. Build & Deployment
+Provided commands to build React app for production.
+
+Provided instructions to load the unpacked extension in Chrome via chrome://extensions.
+
+Explained how to organize extension folder to include the build and manifest files.

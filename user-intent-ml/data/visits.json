@@ -1,0 +1,17 @@
+[
+  {
+    "url": "https://www.youtube.com/",
+    "title": "YouTube",
+    "timeSpent": 12907
+  },
+  {
+    "url": "https://www.w3schools.com/",
+    "title": "W3Schools Online Web Tutorials",
+    "timeSpent": 60000
+  },
+  {
+    "url": "https://www.netflix.com/",
+    "title": "Netflix",
+    "timeSpent": 30000
+  }
+]
