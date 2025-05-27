@@ -87,7 +87,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
     console.log("Sending visit data to backend:", finalData);
 
-    fetch("http://localhost:5001/api/visits/visits", {
+    fetch("http://localhost:5001/api/visits", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(finalData),
