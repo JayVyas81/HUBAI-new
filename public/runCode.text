@@ -1,3 +1,11 @@
+for git
+
+git add .
+git commit -m "Fix bug in login flow"
+git push
+
+-----------------------------
+
 for running mongo and server 
 
 
@@ -32,3 +40,16 @@ jayvyas@Jays-MacBook-Pro HUBAI % tree -I "node_modules"
 flow of structure 
 
 User visits sites → extension captures data → sends to backend API → backend stores data → export dataset → run ML scripts
+
+--------------------------
+
+run this in service worker for see stored data 
+
+chrome.storage.local.get(null, data => console.log(data));
+
+or for better view
+
+chrome.storage.local.get(null, data => {
+  console.table(data);
+});
+

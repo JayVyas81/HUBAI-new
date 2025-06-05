@@ -1,3 +1,5 @@
+// background.js
+
 // Generate or get userId once on extension install
 function generateUserId() {
   return "user-" + Math.random().toString(36).substring(2, 15);
@@ -30,7 +32,6 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
     console.error("Error getting active tab:", error);
   }
 });
-
 // Handle tab URL updates
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (tabId === activeTabId && changeInfo.url) {
@@ -54,7 +55,13 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       };
 
       console.log("Storing visit data for tab:", tabId, visitData);
-      chrome.storage.local.set({ [tabId.toString()]: visitData });
+      chrome.storage.local.set({ [tabId.toString()]: visitData }, () => {
+        if (chrome.runtime.lastError) {
+          console.error("Storage set error:", chrome.runtime.lastError);
+        } else {
+          console.log("Visit data stored successfully:", visitData);
+        }
+      });
     });
   }
 });
@@ -105,4 +112,25 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
     chrome.storage.local.remove(tabId.toString());
   });
+});
+
+// Listen for messages from content.js (user activity events)
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message.type === "activity") {
+    chrome.storage.local.get("userId", ({ userId }) => {
+      const activityData = {
+        userId: userId || "unknown",
+        url: sender.tab ? sender.tab.url : "",
+        ...message.data,
+      };
+      console.log("Sending in-page activity to backend:", activityData);
+      fetch("http://localhost:5001/api/activities", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(activityData),
+      }).catch((err) => {
+        console.error("Error sending activity data:", err);
+      });
+    });
+  }
 });
