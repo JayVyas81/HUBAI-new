@@ -1,25 +1,19 @@
 {
   "manifest_version": 3,
-  "name": "HUBAI - Human Behaviour Artificial Intelligence",
+  "name": "HUBAI",
   "version": "1.0",
-  "description": "Tracks user activity across tabs and sends session data to the backend.",
-  "permissions": ["tabs", "storage", "activeTab", "scripting"],
-  "host_permissions": ["http://localhost:5001/*", "<all_urls>"],
+  "description": "Tracks web visits and intent",
   "background": {
     "service_worker": "background.js"
   },
-  "action": {
-    "default_popup": "popup.html",
-    "default_title": "User Activity Stats"
-  },
+  "permissions": ["tabs", "storage", "scripting", "activeTab"],
   "icons": {
-    "48": "HUBAI.png"
+    "16": "HUBAI.png",
+    "48": "HUBAI.png",
+    "128": "HUBAI.png"
   },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
-      "run_at": "document_idle"
-    }
-  ]
+  "action": {
+    "default_title": "HUBAI",
+    "default_icon": "HUBAI.png"
+  }
 }

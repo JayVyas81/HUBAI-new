@@ -1,33 +1,73 @@
-// user-tracking-backend/server.js
+require("dotenv").config();
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
-
 const visitRoutes = require("./routes/visitRoutes");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
+const { errorHandler } = require("./middleware/errorHandler");
 
 const app = express();
-const PORT = 5001;
+const PORT = process.env.PORT || 5001;
 
-app.use(cors());
-app.use(express.json());
+// Security middleware
+app.use(helmet());
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    optionsSuccessStatus: 200,
+  })
+);
 
-// MongoDB connection
-mongoose.connect("mongodb://localhost:27017/userTracking", {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
 });
+app.use(limiter);
 
-mongoose.connection.on("connected", () => {
-  console.log("✅ Connected to MongoDB");
-});
+// Body parsing with size limit
+app.use(express.json({ limit: "10kb" }));
 
-mongoose.connection.on("error", (err) => {
-  console.error("❌ MongoDB connection error:", err);
-});
+// MongoDB connection with retry logic
+const connectWithRetry = () => {
+  mongoose
+    .connect(
+      process.env.MONGODB_URI || "mongodb://localhost:27017/userTracking",
+      {
+        useNewUrlParser: true,
+        useUnifiedTopology: true,
+        serverSelectionTimeoutMS: 5000,
+      }
+    )
+    .then(() => console.log("✅ Connected to MongoDB"))
+    .catch((err) => {
+      console.error("❌ MongoDB connection error:", err.message);
+      setTimeout(connectWithRetry, 5000);
+    });
+};
+connectWithRetry();
 
-// Mount the routes at /api/visits
+// Routes
 app.use("/api/visits", visitRoutes);
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server running at http://localhost:${PORT}`);
+// Health check endpoint
+app.get("/health", (req, res) => res.json({ status: "healthy" }));
+
+// Error handling middleware
+app.use(errorHandler);
+
+// Start server
+const server = app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
+
+// Graceful shutdown
+process.on("SIGTERM", () => {
+  server.close(() => {
+    mongoose.connection.close(false, () => {
+      console.log("Server closed");
+      process.exit(0);
+    });
+  });
 });

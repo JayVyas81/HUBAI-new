@@ -1,10 +1,25 @@
-// background.js
-
-// Generate or get userId once on extension install
 function generateUserId() {
   return "user-" + Math.random().toString(36).substring(2, 15);
 }
 
+function isIgnoredUrl(url) {
+  if (!url) return true;
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    return (
+      url.startsWith("chrome://") ||
+      url.startsWith("about:") ||
+      url.startsWith("file://") ||
+      hostname === "localhost" ||
+      hostname === "127.0.0.1"
+    );
+  } catch {
+    return true;
+  }
+}
+
+// Create user ID once on extension install
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.get("userId", (data) => {
     if (!data.userId) {
@@ -21,7 +36,7 @@ chrome.runtime.onInstalled.addListener(() => {
 let activeTabId = null;
 let activeTabUrl = null;
 
-// Handle tab switch
+// Track active tab changes
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   try {
     const tab = await chrome.tabs.get(activeInfo.tabId);
@@ -32,14 +47,85 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
     console.error("Error getting active tab:", error);
   }
 });
-// Handle tab URL updates
+
+// Track tab updates including URL changes
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (tabId === activeTabId && changeInfo.url) {
-    console.log(`Active tab URL changed: ${changeInfo.url}`);
-    activeTabUrl = changeInfo.url;
+  if (tab.active && changeInfo.url) {
+    chrome.storage.local.get([tabId.toString(), "userId"], (result) => {
+      const previousVisit = result[tabId.toString()];
+      const userId = result.userId;
+
+      if (!userId) {
+        console.warn("No userId found, skipping visit tracking.");
+        return;
+      }
+
+      if (previousVisit) {
+        if (isIgnoredUrl(previousVisit.url)) {
+          chrome.storage.local.remove(tabId.toString());
+        } else {
+          const closeTime = new Date().toISOString();
+          const timeSpent =
+            new Date(closeTime).getTime() -
+            new Date(previousVisit.openTime).getTime();
+
+          const finalData = {
+            userId,
+            url: previousVisit.url,
+            title: previousVisit.title,
+            openTime: previousVisit.openTime,
+            closeTime,
+            timeSpent,
+          };
+
+          console.log("Sending previous visit data on URL change:", finalData);
+
+          fetch("http://localhost:5001/api/visits", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(finalData),
+          })
+            .then((res) => {
+              if (res.ok) {
+                console.log("Previous visit data sent successfully");
+              } else {
+                console.error("Failed to send previous visit:", res.statusText);
+              }
+            })
+            .catch((err) => {
+              console.error("Error sending previous visit:", err);
+            });
+
+          chrome.storage.local.remove(tabId.toString());
+        }
+      }
+
+      if (isIgnoredUrl(tab.url)) {
+        console.log("Ignoring URL on update:", tab.url);
+        return;
+      }
+
+      const newVisitData = {
+        userId,
+        url: tab.url,
+        title: tab.title,
+        openTime: new Date().toISOString(),
+        tabId,
+      };
+
+      chrome.storage.local.set({ [tabId.toString()]: newVisitData }, () => {
+        console.log("Started new visit for URL change:", newVisitData);
+      });
+    });
+    return;
   }
 
   if (changeInfo.status === "complete" && tab.active) {
+    if (isIgnoredUrl(tab.url)) {
+      console.log("Ignoring URL on load complete:", tab.url);
+      return;
+    }
+
     chrome.storage.local.get("userId", ({ userId }) => {
       if (!userId) {
         console.warn("No userId found, skipping visit storage.");
@@ -54,28 +140,21 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
         tabId: tabId,
       };
 
-      console.log("Storing visit data for tab:", tabId, visitData);
       chrome.storage.local.set({ [tabId.toString()]: visitData }, () => {
-        if (chrome.runtime.lastError) {
-          console.error("Storage set error:", chrome.runtime.lastError);
-        } else {
-          console.log("Visit data stored successfully:", visitData);
-        }
+        console.log("Visit data stored on load complete:", visitData);
       });
     });
   }
 });
 
-// Handle tab closed
+// Handle tab closed event — finalize visit data
 chrome.tabs.onRemoved.addListener((tabId) => {
-  console.log("Tab closed:", tabId);
-
   chrome.storage.local.get([tabId.toString(), "userId"], (result) => {
     const visit = result[tabId.toString()];
     const userId = result.userId;
 
-    if (!visit || !userId) {
-      console.warn("Visit data or userId missing for tab:", tabId);
+    if (!visit || !userId || isIgnoredUrl(visit.url)) {
+      console.warn("No valid visit to process for tab close:", tabId);
       return;
     }
 
@@ -92,45 +171,24 @@ chrome.tabs.onRemoved.addListener((tabId) => {
       timeSpent,
     };
 
-    console.log("Sending visit data to backend:", finalData);
+    console.log("Sending visit data on tab close:", finalData);
 
     fetch("http://localhost:5001/api/visits", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(finalData),
     })
-      .then((response) => {
-        if (response.ok) {
-          console.log("Data sent successfully:", response.status);
+      .then((res) => {
+        if (res.ok) {
+          console.log("Visit data sent successfully on tab close");
         } else {
-          console.error("Failed to send data:", response.statusText);
+          console.error("Failed to send visit on tab close:", res.statusText);
         }
       })
       .catch((err) => {
-        console.error("Network or backend error:", err);
+        console.error("Error sending visit on tab close:", err);
       });
 
     chrome.storage.local.remove(tabId.toString());
   });
-});
-
-// Listen for messages from content.js (user activity events)
-chrome.runtime.onMessage.addListener((message, sender) => {
-  if (message.type === "activity") {
-    chrome.storage.local.get("userId", ({ userId }) => {
-      const activityData = {
-        userId: userId || "unknown",
-        url: sender.tab ? sender.tab.url : "",
-        ...message.data,
-      };
-      console.log("Sending in-page activity to backend:", activityData);
-      fetch("http://localhost:5001/api/activities", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(activityData),
-      }).catch((err) => {
-        console.error("Error sending activity data:", err);
-      });
-    });
-  }
 });
