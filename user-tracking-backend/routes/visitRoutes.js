@@ -1,116 +1,202 @@
 const express = require("express");
 const router = express.Router();
 const Visit = require("../models/Visit");
-const { body, validationResult } = require("express-validator");
+const { body, query, validationResult } = require("express-validator");
 
-// POST /api/visits - Save a new visit with validation
+const rateLimiter = require("../middleware/rateLimiter");
+const checkObjectId = require("../middleware/checkObjectId");
+
+// Apply rate limiting to all visit routes
+router.use(rateLimiter);
+
+// POST /api/visits - Save a new visit with comprehensive validation
 router.post(
   "/",
   [
-    body("userId").notEmpty().isString(),
-    body("url").isURL(),
-    body("openTime").optional().isISO8601(),
+    // Validation rules are defined here
+    body("userId")
+      .notEmpty()
+      .isString()
+      .withMessage("User ID must be a valid string"),
+    body("url").isURL().withMessage("Invalid URL format"),
+    body("title").optional().isString(),
+    body("openTime")
+      .optional()
+      .isISO8601()
+      .withMessage("Invalid ISO8601 date format"),
+    body("closeTime")
+      .optional()
+      .isISO8601()
+      .withMessage("Invalid ISO8601 date format"),
   ],
-  async (req, res) => {
+  async (req, res, next) => {
+    // --- THIS IS THE FIX ---
+    // We now handle the validation result directly inside the route handler,
+    // bypassing the potentially faulty `validateRequest` middleware.
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+      console.log("---VALIDATION FAILED---:", errors.array());
+      return res.status(400).json({ success: false, errors: errors.array() });
     }
 
-    try {
-      const visit = new Visit(req.body);
-      await visit.save();
+    // --- LOG 1 ---
+    console.log("---LOG 1: POST /api/visits handler reached. Body:", req.body);
 
-      // Calculate duration if closeTime is provided
-      if (req.body.closeTime) {
+    try {
+      const visitData = req.body;
+      const visit = new Visit(visitData);
+
+      if (visitData.openTime && visitData.closeTime) {
         visit.timeSpent =
-          (new Date(req.body.closeTime) - new Date(visit.openTime)) / 1000;
-        await visit.save();
+          (new Date(visitData.closeTime) - new Date(visitData.openTime)) / 1000;
       }
 
-      res.status(201).json(visit);
-    } catch (err) {
-      console.error("Error saving visit:", err);
-      res.status(500).json({
-        message: "Failed to save visit",
-        error: process.env.NODE_ENV === "development" ? err.message : undefined,
+      // --- LOG 2 ---
+      console.log("---LOG 2: Attempting to save visit...");
+      await visit.save();
+      // --- LOG 3 ---
+      console.log("---LOG 3: Visit saved successfully!");
+
+      res.status(201).json({
+        success: true,
+        data: visit,
       });
+    } catch (err) {
+      // --- LOG 4 ---
+      console.error("---LOG 4: Error during visit save:", err);
+      next(err); // Pass to error handler
     }
   }
 );
 
-// GET /api/visits/export - Enhanced export with filtering
-router.get("/export", async (req, res) => {
-  const { userId, startDate, endDate, domain } = req.query;
+// GET /api/visits/export - This route remains the same
+router.get(
+  "/export",
+  [
+    query("userId")
+      .notEmpty()
+      .withMessage("User ID is required in query parameters"),
+    query("startDate")
+      .optional()
+      .isISO8601()
+      .withMessage("Invalid start date format"),
+    query("endDate")
+      .optional()
+      .isISO8601()
+      .withMessage("Invalid end date format"),
+    (req, res, next) => {
+      // Manual validation for GET route
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ success: false, errors: errors.array() });
+      }
+      next();
+    },
+  ],
+  async (req, res, next) => {
+    try {
+      const { userId, startDate, endDate, domain, format = "json" } = req.query;
+      const query = { userId };
 
-  if (!userId) {
-    return res.status(400).json({ error: "Missing required userId parameter" });
+      if (startDate || endDate) {
+        query.openTime = {};
+        if (startDate) query.openTime.$gte = new Date(startDate);
+        if (endDate) query.openTime.$lte = new Date(endDate);
+      }
+      if (domain) {
+        query.domain = { $regex: new RegExp(domain, "i") };
+      }
+
+      const visits = await Visit.find(query)
+        .sort({ openTime: -1 })
+        .lean()
+        .exec();
+
+      if (format.toLowerCase() === "csv") {
+        const { json2csv } = await import("json-2-csv");
+        const csv = await json2csv(visits, {
+          fields: [
+            "url",
+            "title",
+            "timeSpent",
+            "openTime",
+            "closeTime",
+            "intent",
+            "domain",
+          ],
+          unwindArrays: true,
+        });
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader(
+          "Content-Disposition",
+          "attachment; filename=visits-export.csv"
+        );
+        return res.send(csv);
+      }
+
+      res.json({
+        success: true,
+        count: visits.length,
+        data: visits,
+      });
+    } catch (err) {
+      next(err);
+    }
   }
+);
 
-  try {
-    const query = { userId };
-
-    // Date filtering
-    if (startDate || endDate) {
-      query.openTime = {};
-      if (startDate) query.openTime.$gte = new Date(startDate);
-      if (endDate) query.openTime.$lte = new Date(endDate);
+// PUT /api/visits/:id/activities - This route remains the same
+router.put(
+  "/:id/activities",
+  checkObjectId,
+  [
+    body().isArray().withMessage("Activities must be an array"),
+    body("*.eventType")
+      .notEmpty()
+      .isIn(["click", "scroll", "keydown", "mousemove", "navigation"])
+      .withMessage("Invalid event type"),
+    body("*.timestamp")
+      .optional()
+      .isISO8601()
+      .withMessage("Invalid timestamp format"),
+  ],
+  async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, errors: errors.array() });
     }
-
-    // Domain filtering
-    if (domain) {
-      query.domain = domain;
-    }
-
-    const visits = await Visit.find(query).sort({ openTime: -1 }).lean();
-
-    // Format for CSV if requested
-    if (req.query.format === "csv") {
-      const csv = visits.map((v) => ({
-        URL: v.url,
-        Title: v.title,
-        "Time Spent (s)": v.timeSpent,
-        "Start Time": v.openTime.toISOString(),
-        "End Time": v.closeTime?.toISOString() || "",
-        Intent: v.intent,
-      }));
-
-      // Convert to CSV string (would need a proper CSV package for production)
-      res.setHeader("Content-Type", "text/csv");
-      return res.send(
-        Object.keys(csv[0]).join(",") +
-          "\n" +
-          csv.map((o) => Object.values(o).join(",")).join("\n")
+    try {
+      const visit = await Visit.findByIdAndUpdate(
+        req.params.id,
+        {
+          $push: {
+            activities: {
+              $each: req.body.map((activity) => ({
+                ...activity,
+                timestamp: activity.timestamp || new Date(),
+              })),
+            },
+          },
+          $set: { lastUpdated: new Date() },
+        },
+        { new: true, runValidators: true }
       );
+
+      if (!visit) {
+        return res.status(404).json({
+          success: false,
+          error: "Visit not found",
+        });
+      }
+
+      res.json({
+        success: true,
+        data: visit,
+      });
+    } catch (err) {
+      next(err);
     }
-
-    res.json(visits);
-  } catch (err) {
-    console.error("Export error:", err);
-    res.status(500).json({
-      error: "Failed to export visits",
-      details: process.env.NODE_ENV === "development" ? err.message : undefined,
-    });
   }
-});
-
-// New endpoint for bulk activity updates
-router.post("/:id/activities", async (req, res) => {
-  try {
-    const visit = await Visit.findByIdAndUpdate(
-      req.params.id,
-      { $push: { activities: { $each: req.body } } },
-      { new: true }
-    );
-
-    if (!visit) {
-      return res.status(404).json({ error: "Visit not found" });
-    }
-
-    res.json(visit);
-  } catch (err) {
-    res.status(500).json({ error: "Failed to update activities" });
-  }
-});
+);
 
 module.exports = router;

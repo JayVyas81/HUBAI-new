@@ -63,6 +63,12 @@ visitSchema.pre("save", function (next) {
   }
   next();
 });
+
+/*
+// --- THIS BLOCK WAS CAUSING THE ERROR AND HAS BEEN REMOVED ---
+// This code tried to run the machine learning analysis every time a visit was saved.
+// This is not the correct architectural pattern. The ML analysis should be run as a
+// separate process on the data after it has been saved.
 visitSchema.pre("save", async function (next) {
   if (this.isNew) {
     const analyzer = require("../user-intent-ml/behaviorAnalyzer");
@@ -70,5 +76,6 @@ visitSchema.pre("save", async function (next) {
   }
   next();
 });
+*/
 
 module.exports = mongoose.model("Visit", visitSchema);
