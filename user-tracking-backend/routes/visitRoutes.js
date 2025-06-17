@@ -1,16 +1,15 @@
-// user-tracking-backend/routes/visitRoutes.js
-
 const express = require("express");
 const router = express.Router();
 const Visit = require("../models/Visit");
 const { body, query, validationResult } = require("express-validator");
+const axios = require("axios");
 
 const rateLimiter = require("../middleware/rateLimiter");
 const checkObjectId = require("../middleware/checkObjectId");
 
 router.use(rateLimiter);
 
-// POST /api/visits
+// (The POST /api/visits route is correct and remains the same)
 router.post(
   "/",
   [
@@ -30,18 +29,18 @@ router.post(
       const visitData = req.body;
       const visit = new Visit(visitData);
 
-      // This logic is now handled by the extension, but we can keep it as a fallback.
       if (!visit.timeSpent && visitData.openTime && visitData.closeTime) {
         visit.timeSpent =
-          (new Date(visitData.closeTime) - new Date(visitData.openTime)) / 1000;
+          new Date(visitData.closeTime) - new Date(visitData.openTime);
       }
+
+      // We will remove the real-time prediction for now to focus on the full report
+      // You can add it back later if you wish.
 
       await visit.save();
 
-      // --- REAL-TIME UPDATE ---
-      // Get the socket.io instance and emit a 'new_visit' event to all clients
       const io = req.app.get("socketio");
-      io.emit("new_visit", visit); // Broadcast the newly saved visit
+      io.emit("new_visit", visit);
 
       res.status(201).json({ success: true, data: visit });
     } catch (err) {
@@ -49,6 +48,66 @@ router.post(
     }
   }
 );
+
+// --- NEW ROUTE: Generate User Interest Report ---
+router.get("/report/:userId", async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+    console.log(`Generating report for user: ${userId}`);
+
+    // 1. Fetch all visits for the user from the database
+    const visits = await Visit.find({ userId }).lean();
+    if (visits.length === 0) {
+      return res.json({
+        success: true,
+        report: {},
+        message: "No visits found for this user.",
+      });
+    }
+
+    console.log(`Found ${visits.length} visits to analyze.`);
+
+    // 2. Analyze each visit by calling the Python AI server
+    const analysisPromises = visits.map((visit) =>
+      axios
+        .post("http://localhost:5002/analyze_topics", {
+          title: visit.title,
+          url: visit.url,
+        })
+        .then((response) => response.data.topics)
+        .catch((err) => {
+          console.error(`Failed to analyze URL ${visit.url}:`, err.message);
+          return {}; // Return empty object on failure
+        })
+    );
+
+    const allTopicAnalyses = await Promise.all(analysisPromises);
+
+    // 3. Aggregate the results into a single interest profile
+    const interestProfile = {};
+    let totalWeight = 0;
+    allTopicAnalyses.forEach((topics) => {
+      for (const [topic, probability] of Object.entries(topics)) {
+        interestProfile[topic] = (interestProfile[topic] || 0) + probability;
+        totalWeight += probability;
+      }
+    });
+
+    // 4. Normalize the profile to get percentages
+    if (totalWeight > 0) {
+      for (const topic in interestProfile) {
+        interestProfile[topic] = (interestProfile[topic] / totalWeight) * 100;
+      }
+    }
+
+    console.log("Generated Interest Profile:", interestProfile);
+
+    // 5. Return the final report
+    res.json({ success: true, report: interestProfile });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // (The GET /export and PUT /activities routes remain unchanged)
 router.get(

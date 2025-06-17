@@ -75,3 +75,7 @@ Provided instructions to load the unpacked extension in Chrome via chrome://exte
 Explained how to organize extension folder to include the build and manifest files.
 
 Real-Time Updates with WebSockets 
+
+This calls for a more advanced AI technique called Topic Modeling. We will use an algorithm called Latent Dirichlet Allocation (LDA) to discover abstract topics from your browsing history.
+
+pip install gensim nltk

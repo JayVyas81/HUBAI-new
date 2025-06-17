@@ -3,7 +3,9 @@ for git
 git add .
 git commit -m "Fix bug in login flow"
 git push
-
+-----------------------
+(base) jayvyas@Jays-MacBook-Pro user-intent-ml % conda activate hubai
+(hubai) jayvyas@Jays-MacBook-Pro user-intent-ml % python3 train_topic_model.py
 -----------------------------
 
 for running mongo and server 

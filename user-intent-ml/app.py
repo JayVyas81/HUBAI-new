@@ -1,71 +1,90 @@
-# Save this file as user-intent-ml/app.py
+# user-intent-ml/app.py
 
-import joblib
 from flask import Flask, request, jsonify
-from urllib.parse import urlparse
 import os
+import requests
+from bs4 import BeautifulSoup
+import re
+from gensim.corpora import Dictionary
+from gensim.models import LdaModel
+import nltk
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
 
 # --- Initialization ---
 app = Flask(__name__)
 
-# --- Load the Trained Model ---
-# This line finds the model file and loads it into memory when the server starts.
-model_path = os.path.join(os.path.dirname(__file__), 'models', 'intent_classifier.joblib')
+# --- Load Models and Preprocessing Tools ---
+output_dir = "models"
 try:
-    model = joblib.load(model_path)
-    print(f"✅ Model loaded successfully from {model_path}")
+    dictionary = Dictionary.load(os.path.join(output_dir, 'lda_dictionary.dict'))
+    lda_model = LdaModel.load(os.path.join(output_dir, 'lda_topic_model.model'))
+    stop_words = set(stopwords.words('english'))
+    lemmatizer = WordNetLemmatizer()
+    print("✅ Topic model and dictionary loaded successfully.")
 except FileNotFoundError:
-    model = None
-    print(f"🚨 WARNING: Model file not found at {model_path}. The /predict endpoint will not work.")
-    print("Please run `train_model.py` to create the model file.")
+    dictionary = None
+    lda_model = None
+    print("🚨 WARNING: Topic model not found. Please run `train_topic_model.py` first.")
 
-def extract_domain(url):
-    """Helper function to get the domain from a URL."""
+def preprocess(text):
+    """Preprocesses text for the topic model."""
+    if not text:
+        return []
+    text = re.sub(r'\W', ' ', text)
+    text = text.lower()
+    tokens = text.split()
+    return [lemmatizer.lemmatize(word) for word in tokens if word not in stop_words and len(word) > 3]
+
+def extract_text_from_url(url):
+    """Fetches a URL and extracts meaningful text."""
     try:
-        domain = urlparse(url).netloc
-        if domain.startswith("www."):
-            domain = domain[4:]
-        return domain
-    except:
+        response = requests.get(url, timeout=5, headers={'User-Agent': 'Mozilla/5.0'})
+        response.raise_for_status()
+        soup = BeautifulSoup(response.content, 'html.parser')
+        for script_or_style in soup(["script", "style"]):
+            script_or_style.decompose()
+        text_parts = [tag.get_text() for tag in soup.find_all(['p', 'h1', 'h2', 'h3', 'title'])]
+        return ' '.join(' '.join(text_parts).split())
+    except requests.RequestException as e:
+        print(f"Error fetching URL {url}: {e}")
         return ""
 
-# --- API Endpoint ---
-@app.route("/predict", methods=["POST"])
-def predict():
-    """
-    Receives a POST request with a 'title' and 'url',
-    and returns the predicted intent.
-    """
-    if not model:
-        return jsonify({"error": "Model not loaded. Cannot make predictions."}), 500
+# --- API Endpoint for Topic Analysis ---
+@app.route("/analyze_topics", methods=["POST"])
+def analyze_topics():
+    if not lda_model or not dictionary:
+        return jsonify({"error": "Model not loaded"}), 500
 
-    # Get data from the JSON request body
     data = request.get_json()
-    title = data.get("title", "")
     url = data.get("url", "")
+    title = data.get("title", "")
+    
+    if not url:
+        return jsonify({"error": "Missing 'url' in request"}), 400
+    
+    # Analyze the page content, falling back to title if needed
+    page_text = extract_text_from_url(url)
+    if not page_text:
+        page_text = title
 
-    if not title or not url:
-        return jsonify({"error": "Missing 'title' or 'url' in request"}), 400
+    # Preprocess the text and get the topic distribution
+    processed_text = preprocess(page_text)
+    bow = dictionary.doc2bow(processed_text)
+    topics = lda_model.get_document_topics(bow, minimum_probability=0.1)
 
-    # Prepare the feature text, just like in your training script
-    domain = extract_domain(url)
-    text_features = title + " " + domain
-
-    # Make the prediction
-    # The model expects a list of items, so we wrap our text in a list.
-    prediction = model.predict([text_features])
-
-    # Return the prediction as JSON
-    # We take the first item from the prediction array.
-    return jsonify({"intent": prediction[0]})
+    # Format the topics for the response
+    # You can name your topics based on the keywords you saw during training
+    # For now, we'll just use "Topic X"
+    topic_distribution = {f"Topic {topic_id}": float(prob) for topic_id, prob in topics}
+    
+    return jsonify({"topics": topic_distribution})
 
 
 # Health check endpoint
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "healthy", "model_loaded": model is not None})
+    return jsonify({"status": "healthy", "model_loaded": lda_model is not None})
 
 if __name__ == "__main__":
-    # Runs the Flask server on port 5002
     app.run(port=5002, debug=True)
-
