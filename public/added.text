@@ -73,3 +73,5 @@ Provided commands to build React app for production.
 Provided instructions to load the unpacked extension in Chrome via chrome://extensions.
 
 Explained how to organize extension folder to include the build and manifest files.
+
+Real-Time Updates with WebSockets 

@@ -1,23 +1,34 @@
+// user-tracking-backend/server.js
+
 require("dotenv").config();
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
+const http = require("http"); // Import Node's built-in HTTP module
+const { Server } = require("socket.io"); // Import the socket.io Server
+
 const visitRoutes = require("./routes/visitRoutes");
 const helmet = require("helmet");
-// --- THIS IS THE FIX ---
-// The package is now correctly required.
 const rateLimit = require("express-rate-limit");
 const { errorHandler } = require("./middleware/errorHandler");
 
 const app = express();
+const server = http.createServer(app); // Create an HTTP server from the Express app
+
+// Attach socket.io to the server with CORS configuration
+const io = new Server(server, {
+  cors: {
+    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    methods: ["GET", "POST"],
+  },
+});
+
 const PORT = process.env.PORT || 5001;
 
+// --- Middleware ---
 const allowedOrigins = [process.env.FRONTEND_URL || "http://localhost:3000"];
-
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps, curl, or browser extensions)
-    // or requests from the allowed frontend URL.
     if (
       !origin ||
       allowedOrigins.includes(origin) ||
@@ -30,56 +41,46 @@ const corsOptions = {
   },
   optionsSuccessStatus: 200,
 };
-
 app.use(helmet());
-app.use(cors(corsOptions)); // Use the new dynamic cors options
+app.use(cors(corsOptions));
 
-// Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 app.use(limiter);
-
-// Body parsing with size limit
 app.use(express.json({ limit: "10kb" }));
 
-// MongoDB connection with retry logic
-const connectWithRetry = () => {
+// --- Make the 'io' instance available to our routes ---
+app.set("socketio", io);
+
+// --- Routes & DB Connection ---
+connectWithRetry();
+app.use("/api/visits", visitRoutes);
+app.get("/health", (req, res) => res.json({ status: "healthy" }));
+app.use(errorHandler);
+
+// --- Start Server ---
+// Change app.listen to server.listen to start the combined server
+server.listen(PORT, () => {
+  console.log(`🚀 Server with WebSocket support running on port ${PORT}`);
+});
+
+// (Your connectWithRetry and graceful shutdown logic remains the same)
+function connectWithRetry() {
   mongoose
     .connect(
-      process.env.MONGODB_URI || "mongodb://localhost:27017/userTracking",
-      {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-        serverSelectionTimeoutMS: 5000,
-      }
+      process.env.MONGODB_URI || "mongodb://localhost:27017/userTracking"
     )
     .then(() => console.log("✅ Connected to MongoDB"))
     .catch((err) => {
       console.error("❌ MongoDB connection error:", err.message);
       setTimeout(connectWithRetry, 5000);
     });
-};
-connectWithRetry();
+}
 
-// Routes
-app.use("/api/visits", visitRoutes);
-
-// Health check endpoint
-app.get("/health", (req, res) => res.json({ status: "healthy" }));
-
-// Error handling middleware
-app.use(errorHandler);
-
-// Start server
-const server = app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
-
-// Graceful shutdown
 process.on("SIGTERM", () => {
   server.close(() => {
     mongoose.connection.close(false, () => {
