@@ -1,3 +1,5 @@
+// user-tracking-backend/models/Visit.js
+
 const mongoose = require("mongoose");
 
 const activitySchema = new mongoose.Schema(
@@ -8,9 +10,8 @@ const activitySchema = new mongoose.Schema(
       required: true,
     },
     timestamp: { type: Date, default: Date.now },
-    coordinates: { x: Number, y: Number }, // For mouse events
-    element: String, // DOM element interacted with
-    duration: Number, // For sustained activities
+    coordinates: { x: Number, y: Number },
+    element: String,
   },
   { _id: false }
 );
@@ -26,35 +27,47 @@ const visitSchema = new mongoose.Schema(
         message: (props) => `${props.value} is not a valid URL!`,
       },
     },
-    domain: { type: String, index: true }, // Extracted domain for faster queries
+    domain: { type: String, index: true },
     title: { type: String, trim: true },
     tabId: { type: String },
     openTime: { type: Date, required: true, default: Date.now },
     closeTime: { type: Date },
-    timeSpent: { type: Number, min: 0 }, // in seconds
+    timeSpent: { type: Number, min: 0 }, // This is in milliseconds
     activities: [activitySchema],
     intent: {
       type: String,
+      // --- THIS IS THE FINAL FIX ---
+      // "Unclassified" has been added to the list of allowed values.
       enum: [
-        "Research",
-        "Shopping",
+        "Adult",
+        "Business/Corporate",
+        "Computers and Technology",
+        "E-Commerce",
+        "Education",
         "Entertainment",
-        "Communication",
-        "Work",
+        "Food",
+        "Forums",
+        "Games",
+        "Health and Fitness",
+        "Law and Government",
+        "News",
+        "Photography",
+        "Social Networking and Messaging",
+        "Sports",
+        "Streaming Services",
+        "Travel",
+        "Unclassified", // Added this new value
         "Unknown",
       ],
       default: "Unknown",
     },
-    screenshot: String, // Base64 thumbnail for visual context
   },
   {
-    timestamps: true, // Adds createdAt and updatedAt
-    toJSON: { virtuals: true },
-    toObject: { virtuals: true },
+    timestamps: true,
   }
 );
 
-// Add pre-save hook to extract domain
+// Pre-save hook to extract domain
 visitSchema.pre("save", function (next) {
   try {
     this.domain = new URL(this.url).hostname.replace("www.", "");
@@ -63,19 +76,5 @@ visitSchema.pre("save", function (next) {
   }
   next();
 });
-
-/*
-// --- THIS BLOCK WAS CAUSING THE ERROR AND HAS BEEN REMOVED ---
-// This code tried to run the machine learning analysis every time a visit was saved.
-// This is not the correct architectural pattern. The ML analysis should be run as a
-// separate process on the data after it has been saved.
-visitSchema.pre("save", async function (next) {
-  if (this.isNew) {
-    const analyzer = require("../user-intent-ml/behaviorAnalyzer");
-    this.intent = await analyzer.analyzeVisit(this);
-  }
-  next();
-});
-*/
 
 module.exports = mongoose.model("Visit", visitSchema);

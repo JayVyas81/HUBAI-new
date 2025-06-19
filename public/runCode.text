@@ -1,3 +1,25 @@
+Run All Your Servers:
+
+Start the AI Server:
+
+Make sure you are in the (hubai) environment.
+Navigate to your user-intent-ml folder.
+Run the command: python3 app.py
+You should see the message: ✅ Website Classifier model loaded successfully.
+Start the Backend Server:
+
+Open a new terminal window.
+Navigate to your user-tracking-backend folder.
+Run the command: node server.js
+You should see 🚀 Server running on port 5001.
+Start the Frontend Dashboard:
+
+Open a third terminal window.
+Navigate to your user-tracking-frontend folder.
+Run the command: npm start
+This will open your dashboard in the browser.
+
+-------------------------
 for git
 
 git add .

@@ -4,37 +4,20 @@ from flask import Flask, request, jsonify
 import os
 import requests
 from bs4 import BeautifulSoup
-import re
-from gensim.corpora import Dictionary
-from gensim.models import LdaModel
-import nltk
-from nltk.corpus import stopwords
-from nltk.stem import WordNetLemmatizer
+import joblib
 
 # --- Initialization ---
 app = Flask(__name__)
 
-# --- Load Models and Preprocessing Tools ---
-output_dir = "models"
+# --- Load the NEW Classifier Model ---
+model_path = os.path.join(os.path.dirname(__file__), 'models', 'website_classifier.joblib')
 try:
-    dictionary = Dictionary.load(os.path.join(output_dir, 'lda_dictionary.dict'))
-    lda_model = LdaModel.load(os.path.join(output_dir, 'lda_topic_model.model'))
-    stop_words = set(stopwords.words('english'))
-    lemmatizer = WordNetLemmatizer()
-    print("✅ Topic model and dictionary loaded successfully.")
+    classifier_model = joblib.load(model_path)
+    print(f"✅ Website Classifier model loaded successfully from {model_path}")
 except FileNotFoundError:
-    dictionary = None
-    lda_model = None
-    print("🚨 WARNING: Topic model not found. Please run `train_topic_model.py` first.")
-
-def preprocess(text):
-    """Preprocesses text for the topic model."""
-    if not text:
-        return []
-    text = re.sub(r'\W', ' ', text)
-    text = text.lower()
-    tokens = text.split()
-    return [lemmatizer.lemmatize(word) for word in tokens if word not in stop_words and len(word) > 3]
+    classifier_model = None
+    print(f"🚨 WARNING: Classifier model not found at {model_path}. The /classify endpoint will not work.")
+    print("Please run `train_classifier.py` to create the model file.")
 
 def extract_text_from_url(url):
     """Fetches a URL and extracts meaningful text."""
@@ -50,41 +33,33 @@ def extract_text_from_url(url):
         print(f"Error fetching URL {url}: {e}")
         return ""
 
-# --- API Endpoint for Topic Analysis ---
-@app.route("/analyze_topics", methods=["POST"])
-def analyze_topics():
-    if not lda_model or not dictionary:
-        return jsonify({"error": "Model not loaded"}), 500
+# --- API Endpoint for Website Classification ---
+@app.route("/classify", methods=["POST"])
+def classify_website():
+    if not classifier_model:
+        return jsonify({"error": "Classifier model not loaded"}), 500
 
     data = request.get_json()
     url = data.get("url", "")
-    title = data.get("title", "")
     
     if not url:
         return jsonify({"error": "Missing 'url' in request"}), 400
     
-    # Analyze the page content, falling back to title if needed
     page_text = extract_text_from_url(url)
     if not page_text:
-        page_text = title
+        return jsonify({"category": "Unclassified"})
 
-    # Preprocess the text and get the topic distribution
-    processed_text = preprocess(page_text)
-    bow = dictionary.doc2bow(processed_text)
-    topics = lda_model.get_document_topics(bow, minimum_probability=0.1)
-
-    # Format the topics for the response
-    # You can name your topics based on the keywords you saw during training
-    # For now, we'll just use "Topic X"
-    topic_distribution = {f"Topic {topic_id}": float(prob) for topic_id, prob in topics}
+    # The model expects a list of items, so we wrap our text in a list
+    prediction = classifier_model.predict([page_text])
     
-    return jsonify({"topics": topic_distribution})
+    # Return the prediction as JSON
+    return jsonify({"category": prediction[0]})
 
 
 # Health check endpoint
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "healthy", "model_loaded": lda_model is not None})
+    return jsonify({"status": "healthy", "model_loaded": classifier_model is not None})
 
 if __name__ == "__main__":
     app.run(port=5002, debug=True)
