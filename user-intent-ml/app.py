@@ -1,4 +1,4 @@
-# user-intent-ml/app.py
+# user-intent-ml/app.py  run this 
 
 from flask import Flask, request, jsonify
 import os
