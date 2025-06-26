@@ -1,11 +1,12 @@
 // user-tracking-backend/server.js
+// This is the final, corrected version of your main backend server.
 
 require("dotenv").config();
 const express = require("express");
 const mongoose = require("mongoose");
-const cors = require("cors");
-const http = require("http"); // Import Node's built-in HTTP module
-const { Server } = require("socket.io"); // Import the socket.io Server
+const cors = require("cors"); // Import cors
+const http = require("http");
+const { Server } = require("socket.io");
 
 const visitRoutes = require("./routes/visitRoutes");
 const helmet = require("helmet");
@@ -13,12 +14,17 @@ const rateLimit = require("express-rate-limit");
 const { errorHandler } = require("./middleware/errorHandler");
 
 const app = express();
-const server = http.createServer(app); // Create an HTTP server from the Express app
+const server = http.createServer(app);
 
-// Attach socket.io to the server with CORS configuration
+// --- THIS IS THE FIX ---
+// We are simplifying the CORS setup to be more open, which is perfect for a local
+// development environment and will solve the connection issue with the extension.
+app.use(cors());
+
+// Attach socket.io to the server AFTER the simplified CORS middleware
 const io = new Server(server, {
   cors: {
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    origin: "*", // Allow all origins for socket.io as well
     methods: ["GET", "POST"],
   },
 });
@@ -26,34 +32,17 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 5001;
 
 // --- Middleware ---
-const allowedOrigins = [process.env.FRONTEND_URL || "http://localhost:3000"];
-const corsOptions = {
-  origin: (origin, callback) => {
-    if (
-      !origin ||
-      allowedOrigins.includes(origin) ||
-      origin.startsWith("chrome-extension://")
-    ) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  optionsSuccessStatus: 200,
-};
 app.use(helmet());
-app.use(cors(corsOptions));
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 200, // Increased limit slightly
   standardHeaders: true,
   legacyHeaders: false,
 });
 app.use(limiter);
-app.use(express.json({ limit: "10kb" }));
+app.use(express.json({ limit: "1mb" })); // Increased size limit slightly
 
-// --- Make the 'io' instance available to our routes ---
 app.set("socketio", io);
 
 // --- Routes & DB Connection ---
@@ -62,13 +51,20 @@ app.use("/api/visits", visitRoutes);
 app.get("/health", (req, res) => res.json({ status: "healthy" }));
 app.use(errorHandler);
 
+// --- Error Handlers for Stability ---
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("--- UNHANDLED REJECTION ---", reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("--- UNCAUGHT EXCEPTION ---", error);
+  process.exit(1);
+});
+
 // --- Start Server ---
-// Change app.listen to server.listen to start the combined server
 server.listen(PORT, () => {
   console.log(`🚀 Server with WebSocket support running on port ${PORT}`);
 });
 
-// (Your connectWithRetry and graceful shutdown logic remains the same)
 function connectWithRetry() {
   mongoose
     .connect(

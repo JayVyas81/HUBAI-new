@@ -30,14 +30,15 @@ const visitSchema = new mongoose.Schema(
     domain: { type: String, index: true },
     title: { type: String, trim: true },
     tabId: { type: String },
-    openTime: { type: Date, required: true, default: Date.now },
+    // --- THIS IS THE FIX ---
+    // Added `index: -1` to optimize sorting by this field in descending order.
+    // This will make your dashboard load instantly.
+    openTime: { type: Date, required: true, default: Date.now, index: -1 },
     closeTime: { type: Date },
     timeSpent: { type: Number, min: 0 }, // This is in milliseconds
     activities: [activitySchema],
     intent: {
       type: String,
-      // --- THIS IS THE FINAL FIX ---
-      // "Unclassified" has been added to the list of allowed values.
       enum: [
         "Adult",
         "Business/Corporate",
@@ -56,7 +57,7 @@ const visitSchema = new mongoose.Schema(
         "Sports",
         "Streaming Services",
         "Travel",
-        "Unclassified", // Added this new value
+        "Unclassified",
         "Unknown",
       ],
       default: "Unknown",

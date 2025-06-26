@@ -6,7 +6,7 @@
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["tabs", "storage", "scripting", "activeTab"],
+  "permissions": ["tabs", "storage", "scripting", "activeTab", "idle"],
   "icons": {
     "16": "HUBAI.png",
     "48": "HUBAI.png",
