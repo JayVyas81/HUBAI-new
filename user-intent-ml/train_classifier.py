@@ -1,26 +1,28 @@
-# Save this file as user-intent-ml/train_classifier.py
-
-import json
 import os
-import re
-import requests
-from bs4 import BeautifulSoup
+import joblib
+import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report
-import joblib
+import requests
+from bs4 import BeautifulSoup
+import time
 
-print("Starting AI Classifier Training...")
+print("Starting Final AI Classifier Training...")
 
-# --- 1. Load Labeled Data ---
+# --- 1. Load Labeled Data from CSV ---
+input_csv_path = os.path.join('data', 'website_classification.csv')
 try:
-    with open("data/labeled_data.json", "r") as f:
-        labeled_data = json.load(f)
-    print(f"Loaded {len(labeled_data)} labeled websites.")
+    df = pd.read_csv(input_csv_path)
+    if 'Unnamed: 0' in df.columns:
+        df = df.drop('Unnamed: 0', axis=1)
+    df.rename(columns={'website_url': 'url', 'Category': 'category'}, inplace=True)
+    df.dropna(subset=['url', 'category'], inplace=True)
+    print(f"Loaded {len(df)} initial rows from {input_csv_path}")
 except FileNotFoundError:
-    print("Error: `data/labeled_data.json` not found. Please create it and add some examples.")
+    print(f"ERROR: Dataset not found at {input_csv_path}")
     exit()
 
 def extract_text_from_url(url):
@@ -31,52 +33,55 @@ def extract_text_from_url(url):
         soup = BeautifulSoup(response.content, 'html.parser')
         for script_or_style in soup(["script", "style"]):
             script_or_style.decompose()
-        text_parts = [tag.get_text() for tag in soup.find_all(['p', 'h1', 'h2', 'h3', 'title', 'meta'])]
-        full_text = ' '.join(' '.join(text_parts).split())
-        return full_text
-    except requests.RequestException as e:
-        print(f"Could not fetch {url}: {e}")
-        return ""
+        text = ' '.join(t.get_text() for t in soup.find_all(['p', 'h1', 'h2', 'h3', 'title', 'meta']))
+        return ' '.join(text.split())
+    except requests.RequestException:
+        return None
 
 # --- 2. Fetch Content for Each URL ---
-print("Fetching content for all websites in the dataset...")
+print("Fetching and processing website content... (This will take several minutes)")
 all_text = []
 all_labels = []
-for item in labeled_data:
-    text = extract_text_from_url(item['url'])
+for index, row in df.iterrows():
+    if index % 50 == 0:
+        print(f"  Processing row {index+1}/{len(df)}...")
+    
+    # Ensure URL has a scheme
+    url = row['url']
+    if not url.startswith('http'):
+        url = 'https://' + url
+
+    text = extract_text_from_url(url)
     if text:
         all_text.append(text)
-        all_labels.append(item['category'])
+        all_labels.append(row['category'])
+    time.sleep(0.05) # Be respectful to servers
 
-print(f"Successfully processed {len(all_text)} websites.")
+print(f"\nSuccessfully processed {len(all_text)} websites.")
 
-# --- 3. Train the Classifier ---
-if not all_text:
-    print("No website content could be fetched. Aborting training.")
+# --- 3. Train the Final Classifier ---
+if len(all_text) < 50:
+    print("Not enough website content could be fetched. Aborting training.")
     exit()
 
-# Split data into training and testing sets
 X_train, X_test, y_train, y_test = train_test_split(all_text, all_labels, test_size=0.2, random_state=42)
 
-# Create a machine learning pipeline
-# It first converts text to numbers (TF-IDF) and then classifies them (Logistic Regression)
 pipeline = Pipeline([
-    ('tfidf', TfidfVectorizer(stop_words='english', ngram_range=(1, 2), max_df=0.9, min_df=2)),
+    ('tfidf', TfidfVectorizer(stop_words='english', max_df=0.9, min_df=3, ngram_range=(1,2))),
     ('clf', LogisticRegression(solver='liblinear', random_state=42))
 ])
 
-print("Training the classification model...")
+print("Training the final classification model...")
 pipeline.fit(X_train, y_train)
 
-# --- 4. Evaluate and Save the Model ---
-print("\n--- Model Evaluation ---")
+# --- 4. Evaluate and Save the Final Model ---
+print("\n--- Final Model Evaluation ---")
 y_pred = pipeline.predict(X_test)
-print(classification_report(y_test, y_pred))
+print(classification_report(y_test, y_pred, zero_division=0))
 
 output_dir = "models"
 os.makedirs(output_dir, exist_ok=True)
 model_path = os.path.join(output_dir, 'website_classifier.joblib')
 joblib.dump(pipeline, model_path)
 
-print(f"\n✅ New powerful classifier model saved to: {model_path}")
-
+print(f"\n✅ Final, powerful classifier model saved to: {model_path}")

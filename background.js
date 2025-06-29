@@ -1,6 +1,8 @@
 // background.js
-// This is the final, definitive version of your extension's background script.
+// This final version includes robust idle tracking and smarter navigation logic
+// to correctly track visits when moving from one site to another.
 
+// --- Helper Functions ---
 function generateUserId() {
   return "user-" + Math.random().toString(36).substring(2, 15);
 }
@@ -22,6 +24,14 @@ function isIgnoredUrl(url) {
   }
 }
 
+function getDomain(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
 // --- Initial Setup ---
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.get("userId", (data) => {
@@ -30,24 +40,21 @@ chrome.runtime.onInstalled.addListener(() => {
       chrome.storage.local.set({ userId: newUserId });
     }
   });
-  // This will now work correctly after reloading the extension with "idle" permission
   chrome.idle.setDetectionInterval(15);
 });
 
 // --- State Management ---
-const visitData = {};
-const tabTimers = {};
+const visitData = {}; // Stores { url, title, openTime }
+const tabTimers = {}; // Stores { totalTimeSpent_ms, segmentStartTime }
 
 // --- Idle Time Tracking ---
 chrome.idle.onStateChanged.addListener((newState) => {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (tabs.length > 0) {
       const activeTabId = tabs[0].id;
-      if (newState === "active") {
-        resumeTimer(activeTabId);
-      } else {
-        pauseTimer(activeTabId);
-      }
+      newState === "active"
+        ? resumeTimer(activeTabId)
+        : pauseTimer(activeTabId);
     }
   });
 });
@@ -55,23 +62,23 @@ chrome.idle.onStateChanged.addListener((newState) => {
 // --- Tab Event Listeners ---
 chrome.tabs.onActivated.addListener((activeInfo) => {
   const tabId = activeInfo.tabId;
+  // Pause all other timers
   for (const otherTabId in tabTimers) {
     if (parseInt(otherTabId) !== tabId) {
       pauseTimer(parseInt(otherTabId));
     }
   }
+  // Resume timer for the newly activated tab
   resumeTimer(tabId);
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  // We only care about URL changes in the active tab
   if (tab.active && changeInfo.url) {
-    if (visitData[tabId]) {
-      sendVisitData(tabId, true);
-    }
-    if (!isIgnoredUrl(tab.url)) {
-      startTracking(tabId, tab.url, tab.title);
-    }
+    handleNavigation(tabId, changeInfo.url, tab.title);
   }
+
+  // Update title when page finishes loading
   if (changeInfo.status === "complete" && visitData[tabId]) {
     visitData[tabId].title = tab.title;
   }
@@ -79,69 +86,93 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (visitData[tabId]) {
-    sendVisitData(tabId, true);
+    sendVisitData(tabId);
+    cleanupVisit(tabId);
   }
 });
 
-// --- Helper Functions ---
+// --- Core Logic Functions ---
+function handleNavigation(tabId, newUrl, newTitle) {
+  if (isIgnoredUrl(newUrl)) {
+    // If we are navigating to an ignored URL, end the previous session if one exists
+    if (visitData[tabId]) {
+      sendVisitData(tabId);
+      cleanupVisit(tabId);
+    }
+    return;
+  }
+
+  const currentVisit = visitData[tabId];
+  const newDomain = getDomain(newUrl);
+
+  // If there's no current visit, or the domain has changed, it's a new session
+  if (!currentVisit || getDomain(currentVisit.url) !== newDomain) {
+    // Send data for the previous visit if it exists
+    if (currentVisit) {
+      sendVisitData(tabId);
+    }
+    // Start tracking the new visit
+    startTracking(tabId, newUrl, newTitle);
+  } else {
+    // If it's the same domain, just update the URL
+    currentVisit.url = newUrl;
+  }
+}
+
 function startTracking(tabId, url, title) {
   visitData[tabId] = { url, title, openTime: new Date().toISOString() };
-  tabTimers[tabId] = { totalTimeSpent: 0, segmentStartTime: Date.now() };
+  tabTimers[tabId] = { totalTimeSpent_ms: 0, segmentStartTime: Date.now() };
+  console.log(`[START] Tracking new visit for tab ${tabId}: ${url}`);
 }
 
 function pauseTimer(tabId) {
   const timer = tabTimers[tabId];
   if (timer && timer.segmentStartTime) {
     const duration = Date.now() - timer.segmentStartTime;
-    timer.totalTimeSpent += duration;
-    timer.segmentStartTime = null;
+    timer.totalTimeSpent_ms += duration;
+    timer.segmentStartTime = null; // Pause
   }
 }
 
 function resumeTimer(tabId) {
   const timer = tabTimers[tabId];
   if (timer && !timer.segmentStartTime) {
-    timer.segmentStartTime = Date.now();
+    timer.segmentStartTime = Date.now(); // Resume
   }
 }
 
-async function sendVisitData(tabId, shouldCleanup) {
+async function sendVisitData(tabId) {
   pauseTimer(tabId);
+
   const visit = visitData[tabId];
   const timer = tabTimers[tabId];
-  if (!visit || !timer) return;
-
-  const { userId } = await chrome.storage.local.get("userId");
-  if (!userId || isIgnoredUrl(visit.url)) {
-    if (shouldCleanup) {
-      delete visitData[tabId];
-      delete tabTimers[tabId];
-    }
+  if (!visit || !timer || timer.totalTimeSpent_ms < 1000) {
+    // Don't save visits less than 1 second
     return;
   }
+
+  const { userId } = await chrome.storage.local.get("userId");
+  if (!userId) return;
 
   const finalData = {
     userId,
     url: visit.url,
-    title: visit.title,
+    title: visit.title || visit.url,
     openTime: visit.openTime,
     closeTime: new Date().toISOString(),
-    // FINAL FIX: Ensure timeSpent is sent as SECONDS
-    timeSpent: Math.round(timer.totalTimeSpent / 1000),
+    // Send time in SECONDS
+    timeSpent: Math.round(timer.totalTimeSpent_ms / 1000),
   };
 
+  console.log(`[SEND] Finalizing visit for tab ${tabId}:`, finalData);
   fetch("http://localhost:5001/api/visits", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(finalData),
-  })
-    .then((res) => {
-      /* ... */
-    })
-    .catch((err) => console.error("[ERROR] Sending visit:", err));
+  }).catch((err) => console.error("[ERROR] Could not send visit data:", err));
+}
 
-  if (shouldCleanup) {
-    delete visitData[tabId];
-    delete tabTimers[tabId];
-  }
+function cleanupVisit(tabId) {
+  delete visitData[tabId];
+  delete tabTimers[tabId];
 }

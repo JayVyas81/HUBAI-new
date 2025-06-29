@@ -1,4 +1,10 @@
+
+flask
+requests
+beautifulsoup4
 scikit-learn
 joblib
-flask
-gunicorn # Recommended for production
+pandas
+datasets
+nltk
+gensim
